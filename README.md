@@ -55,6 +55,9 @@ Kiro sends the data from its own service, not from developer machines, so nothin
 The exports carry usage data (user ID and email, model, credits, durations, tool names and outcomes).
 They do not carry prompts, responses, code or file content.
 
+<img width="5088" height="2254" alt="image" src="https://github.com/user-attachments/assets/968bcdb0-1a0a-4ac6-8eed-daad9f13e08e" />
+
+
 ## What the stack creates
 
 | Resource | Purpose |
