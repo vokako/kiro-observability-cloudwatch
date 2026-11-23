@@ -373,10 +373,11 @@ Parameters:
     Type: String
     Default: kiro-otel
     AllowedPattern: "[a-z0-9-]{1,40}"
-    Description: Prefix for the KMS alias, IAM users and secrets.
+    Description: Prefix for the KMS alias and the secret names.
   DashboardName:
     Type: String
-    Default: Kiro-Usage
+    Default: ""
+    Description: Empty = Kiro-Usage-<Region>. Dashboards are global, so each Region's stack needs its own name.
   CreateLogGroup:
     Type: String
     Default: "true"
@@ -431,6 +432,7 @@ Rules:
 Conditions:
   MakeLogGroup: !Equals [!Ref CreateLogGroup, "true"]
   DoKiro: !Equals [!Ref ConfigureKiroPolicy, "true"]
+  DefaultDashboardName: !Equals [!Ref DashboardName, ""]
 
 Resources:
   # ------------------------------------------------------------------ encryption
@@ -480,10 +482,11 @@ Resources:
       LogStreamName: !Ref LogStreamName
 
   # ------------------------------------------------------------------ ingest identities (one API key each)
+  # No UserName: IAM names are global, and CloudFormation-generated names let the stack run in
+  # several Regions of the same account (one per Kiro profile).
   LogsUser:
     Type: AWS::IAM::User
     Properties:
-      UserName: !Sub "${NamePrefix}-logs"
       Tags: [{Key: purpose, Value: kiro-otel}]
       Policies:
         - PolicyName: ingest
@@ -499,7 +502,6 @@ Resources:
   MetricsUser:
     Type: AWS::IAM::User
     Properties:
-      UserName: !Sub "${NamePrefix}-metrics"
       Tags: [{Key: purpose, Value: kiro-otel}]
       Policies:
         - PolicyName: ingest
@@ -696,7 +698,7 @@ Resources:
   Dashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
-      DashboardName: !Ref DashboardName
+      DashboardName: !If [DefaultDashboardName, !Sub "Kiro-Usage-${AWS::Region}", !Ref DashboardName]
       DashboardBody: !Sub
         - |
 @@DASHBOARD@@
@@ -764,8 +766,9 @@ def template():
     q = []
     for i, (name, lines) in enumerate(QUERIES):
         q.append("  Query%d:\n    Type: AWS::Logs::QueryDefinition\n    Properties:\n"
-                 "      Name: !Sub %s\n      LogGroupNames: [!If [MakeLogGroup, !Ref LogGroup, !Ref LogGroupName]]\n"
-                 "      QueryString: %s" % (i + 1, json.dumps("${DashboardName}/" + name), json.dumps("\n| ".join(lines))))
+                 "      Name: !Sub [%s, {D: !Ref Dashboard}]\n"
+                 "      LogGroupNames: [!If [MakeLogGroup, !Ref LogGroup, !Ref LogGroupName]]\n"
+                 "      QueryString: %s" % (i + 1, json.dumps("${D}/" + name), json.dumps("\n| ".join(lines))))
     return t.replace("@@QUERIES@@", "\n".join(q) + "\n")
 
 

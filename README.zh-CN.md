@@ -24,7 +24,7 @@ Kiro IDE / CLI / Web ──► Kiro 服务（AWS 托管）
       CloudWatch Logs  /kiro/otel-events        CloudWatch OTLP 指标  kiro.daily.*
       （实时事件）                               （每日指标）
                             ▼
-                   CloudWatch 看板 "Kiro-Usage"
+                   CloudWatch 看板 "Kiro-Usage-<地区>"
 ```
 
 数据由 Kiro 服务端发出，不是开发者电脑发出，所以电脑上什么都不用装。
@@ -36,16 +36,16 @@ Kiro IDE / CLI / Web ──► Kiro 服务（AWS 托管）
 |---|---|
 | KMS 密钥 `alias/<NamePrefix>-export` | 加密两个密钥；策略只允许 Kiro（`q.amazonaws.com`）通过 Secrets Manager 解密 |
 | 日志组 `/kiro/otel-events` 和日志流 `events` | 接收实时事件；开启 bearer token 认证；保留 30 天；删除堆栈时保留 |
-| IAM 用户 `<NamePrefix>-logs`、`<NamePrefix>-metrics` | 每把 API key 一个只写身份（日志用户只能写这个日志组） |
+| 两个 IAM 用户（名字由 CloudFormation 生成） | 每把 API key 一个只写身份（日志用户只能写这个日志组） |
 | 密钥 `<NamePrefix>/events`、`<NamePrefix>/metrics` | Kiro 读取的内容：地址和 API key。资源策略只允许 Kiro 读 |
 | Lambda `KeyFunction` 和两个轮换计划 | 创建 API key，每 30 天轮换一次 |
 | Lambda `KiroPolicyFunction` | 把 7 个导出设置合并进 Kiro Controls 策略，检查后发布 |
-| 看板 `Kiro-Usage` 和 5 条保存的 Logs Insights 查询 | 查看数据 |
+| 看板 `Kiro-Usage-<地区>` 和 5 条保存的 Logs Insights 查询 | 查看数据 |
 
 ## 前提条件
 
 - Kiro Enterprise，已使用 **Controls**（Kiro Enterprise Management），profile 在 **美东（弗吉尼亚北部）** 或 **欧洲（法兰克福）**。实时事件只支持这两个地区。
-- 部署到 **Kiro profile 所在的同一个 AWS 账号和地区**。
+- 部署到 **Kiro profile 所在的同一个 AWS 账号和地区**。两个地区都有 profile 时，每个地区各部署一个堆栈。
 - 有权限创建 IAM 用户和角色、KMS 密钥、密钥、Lambda 和 CloudWatch 资源（`CAPABILITY_NAMED_IAM`），并能发布 Kiro Controls 策略。
 - 客户端：每日指标和 LLM 请求事件所有客户端都有。工具调用事件需要 Kiro CLI 3.0.0 以上或最新的 Kiro IDE；升级后要重启所有 IDE 窗口和 `kiro-cli` 进程。
 
@@ -71,8 +71,8 @@ REGION=us-east-1 ./scripts/deploy.sh CreateLogGroup=false LogGroupName=/my/exist
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
-| `NamePrefix` | `kiro-otel` | KMS 别名、IAM 用户和密钥名的前缀 |
-| `DashboardName` | `Kiro-Usage` | 看板名，也是保存查询所在的文件夹名 |
+| `NamePrefix` | `kiro-otel` | KMS 别名和密钥名的前缀 |
+| `DashboardName` | 空 = `Kiro-Usage-<地区>` | 看板名（看板是全局的，所以带上地区），也是保存查询所在的文件夹名 |
 | `CreateLogGroup` | `true` | `false` = 用已有的日志组（必须已开 bearer token 认证并有日志流） |
 | `LogGroupName` / `LogStreamName` | `/kiro/otel-events` / `events` | 实时事件写到哪里 |
 | `RetentionInDays` | `30` | 日志保留天数 |
