@@ -13,18 +13,41 @@
 
 ## 数据怎么流动
 
-```
-Kiro IDE / CLI / Web ──► Kiro 服务（AWS 托管）
-                            │ 从你的 Controls 策略里读到密钥 ARN
-                            ▼
-                Secrets Manager 密钥（在你的账号里，KMS 加密）
-                  = OTLP 地址 + "Authorization: Bearer <CloudWatch API key>"
-                            │ OTLP over HTTPS
-                            ▼
-      CloudWatch Logs  /kiro/otel-events        CloudWatch OTLP 指标  kiro.daily.*
-      （实时事件）                               （每日指标）
-                            ▼
-                   CloudWatch 看板 "Kiro-Usage-<地区>"
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400, "curve": "basis"}}}%%
+flowchart LR
+  subgraph dev["开发者"]
+    direction TB
+    IDE["Kiro IDE"]
+    CLI["Kiro CLI"]
+    WEB["Kiro Web"]
+  end
+  subgraph kiro["Kiro（AWS 托管）"]
+    direction TB
+    POL["Controls 策略<br/>OTel 导出设置"]
+    SVC["Kiro 服务"]
+  end
+  subgraph creds["你的 AWS 账号：凭证"]
+    direction TB
+    ROT["KeyFunction<br/>每 30 天换新 key"]
+    SEC["Secrets Manager<br/>kiro-otel/events<br/>kiro-otel/metrics"]
+    KMS["KMS 密钥"]
+  end
+  subgraph cw["你的 AWS 账号：Amazon CloudWatch"]
+    direction TB
+    LOGS["CloudWatch Logs<br/>/kiro/otel-events"]
+    MET["OTLP 指标<br/>kiro.daily.*"]
+    DASH["看板<br/>Kiro-Usage-地区"]
+  end
+  dev --> SVC
+  POL -. "密钥 ARN" .-> SVC
+  SVC -- "读取地址和 key" --> SEC
+  ROT -- "写入" --> SEC
+  KMS -. "加密" .- SEC
+  SVC == "实时事件（几秒内）" ==> LOGS
+  SVC == "每日指标（00:30 UTC）" ==> MET
+  LOGS --> DASH
+  MET --> DASH
 ```
 
 数据由 Kiro 服务端发出，不是开发者电脑发出，所以电脑上什么都不用装。
@@ -146,6 +169,27 @@ Kiro 发送失败时不会通知你，也不会补发导出打开之前的数据
 ## API key 自动轮换
 
 Secrets Manager 每 **30 天** 轮换一次 API key，每把 key **90 天** 后过期：
+
+```mermaid
+sequenceDiagram
+  participant SM as Secrets Manager
+  participant FN as KeyFunction
+  participant IAM
+  participant CW as CloudWatch
+  participant K as Kiro
+  Note over SM: 每 30 天
+  SM->>FN: createSecret
+  FN->>IAM: 已有两把 key 时删掉最旧的
+  FN->>IAM: 新建一把 key（有效 90 天）
+  FN->>SM: 存为 AWSPENDING
+  SM->>FN: testSecret
+  FN->>CW: 用新 key 发一个空的 OTLP 请求
+  CW-->>FN: 200
+  SM->>FN: finishSecret
+  FN->>SM: AWSPENDING 变成 AWSCURRENT
+  K->>SM: 下次发送读到新 key（ARN 不变）
+  Note over IAM: 上一把 key 保留到下一次轮换
+```
 
 1. 先建一把新 key，并用它调用一次 CloudWatch 接口确认能用。
 2. 密钥的当前值换成新 key。密钥 ARN 不变，所以 Kiro 那边什么都不用改。
