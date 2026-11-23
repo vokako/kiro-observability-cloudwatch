@@ -14,18 +14,41 @@ and [OpenTelemetry metrics](https://kiro.dev/docs/enterprise/monitor-and-track/u
 
 ## How the data flows
 
-```
-Kiro IDE / CLI / Web ──► Kiro service (AWS-owned)
-                            │ reads the secret ARN from your Controls policy
-                            ▼
-                Secrets Manager secret (your account, KMS-encrypted)
-                  = OTLP endpoint + "Authorization: Bearer <CloudWatch API key>"
-                            │ OTLP over HTTPS
-                            ▼
-      CloudWatch Logs  /kiro/otel-events        CloudWatch OTLP metrics  kiro.daily.*
-      (real-time events)                        (daily metrics)
-                            ▼
-                   CloudWatch dashboard "Kiro-Usage-<Region>"
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400, "curve": "basis"}}}%%
+flowchart LR
+  subgraph dev["Developers"]
+    direction TB
+    IDE["Kiro IDE"]
+    CLI["Kiro CLI"]
+    WEB["Kiro Web"]
+  end
+  subgraph kiro["Kiro (AWS-owned)"]
+    direction TB
+    POL["Controls policy<br/>OTel export settings"]
+    SVC["Kiro service"]
+  end
+  subgraph creds["Your AWS account: credentials"]
+    direction TB
+    ROT["KeyFunction<br/>new key every 30 days"]
+    SEC["Secrets Manager<br/>kiro-otel/events<br/>kiro-otel/metrics"]
+    KMS["KMS key"]
+  end
+  subgraph cw["Your AWS account: Amazon CloudWatch"]
+    direction TB
+    LOGS["CloudWatch Logs<br/>/kiro/otel-events"]
+    MET["OTLP metrics<br/>kiro.daily.*"]
+    DASH["Dashboard<br/>Kiro-Usage-REGION"]
+  end
+  dev --> SVC
+  POL -. "secret ARNs" .-> SVC
+  SVC -- "reads endpoint + key" --> SEC
+  ROT -- "writes" --> SEC
+  KMS -. "encrypts" .- SEC
+  SVC == "real-time events (seconds)" ==> LOGS
+  SVC == "daily metrics (00:30 UTC)" ==> MET
+  LOGS --> DASH
+  MET --> DASH
 ```
 
 Kiro sends the data from its own service, not from developer machines, so nothing is installed on laptops.
@@ -155,6 +178,27 @@ Daily-metric widgets use one-day windows because CloudWatch counts the PromQL ra
 ## API key rotation
 
 Secrets Manager rotates each API key every **30 days**, and each key expires after **90 days**:
+
+```mermaid
+sequenceDiagram
+  participant SM as Secrets Manager
+  participant FN as KeyFunction
+  participant IAM
+  participant CW as CloudWatch
+  participant K as Kiro
+  Note over SM: every 30 days
+  SM->>FN: createSecret
+  FN->>IAM: delete the oldest key if two exist
+  FN->>IAM: create a key (valid 90 days)
+  FN->>SM: store it as AWSPENDING
+  SM->>FN: testSecret
+  FN->>CW: empty OTLP request with the new key
+  CW-->>FN: 200
+  SM->>FN: finishSecret
+  FN->>SM: AWSPENDING becomes AWSCURRENT
+  K->>SM: next delivery reads the new key (same ARN)
+  Note over IAM: the previous key stays valid until the next rotation
+```
 
 1. A new key is created and tested against the CloudWatch endpoint.
 2. The secret's current value switches to the new key. The secret ARN never changes, so nothing changes in Kiro.
